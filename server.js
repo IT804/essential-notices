@@ -129,8 +129,10 @@ app.get('/api/admin/announcements',adminAuth,async(req,res,next)=>{try{const sta
 app.patch('/api/admin/announcements/:id',adminAuth,async(req,res,next)=>{try{const id=Number(req.params.id),{status}=req.body||{};if(!Number.isSafeInteger(id)||id<1||!['pending','verified','rejected','resolved'].includes(status))return res.status(400).json({error:'INVALID_UPDATE'});const [result]=await pool.execute('UPDATE announcements SET status=? WHERE id=?',[status,id]);if(!result.affectedRows)return res.status(404).json({error:'NOT_FOUND'});res.json({id,status})}catch(e){next(e)}});
 app.delete('/api/admin/announcements/:id',adminAuth,async(req,res,next)=>{try{const id=Number(req.params.id);const [result]=await pool.execute('DELETE FROM announcements WHERE id=?',[id]);if(!result.affectedRows)return res.status(404).json({error:'NOT_FOUND'});res.json({id,deleted:true})}catch(e){next(e)}});
 
-app.use(express.static(path.join(__dirname,'public')));
-app.get('/admin',(req,res)=>res.sendFile(path.join(__dirname,'public','admin.html')));
-app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
+for (const file of ['admin.css','admin.js','script.js','styles.css']) {
+  app.get(`/${file}`, (req,res)=>res.sendFile(path.join(__dirname,file)));
+}
+app.get('/admin',(req,res)=>res.sendFile(path.join(__dirname,'admin.html')));
+app.get('/',(req,res)=>res.sendFile(path.join(__dirname,'index.html')));
 app.use((err,req,res,next)=>{console.error(err.message);if(res.headersSent)return next(err);const sms=err.message==='SMS_PROVIDER_NOT_CONFIGURED';res.status(sms?503:500).json({error:sms?'SMS_NOT_CONFIGURED':'SERVER_ERROR'});});
 app.listen(port,()=>console.log(`Essential Notices running at http://localhost:${port}`));
