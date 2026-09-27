@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS announcements (
   INDEX idx_blood (blood_type)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS announcement_photos (
+  announcement_id BIGINT UNSIGNED NOT NULL,
+  photo_index TINYINT UNSIGNED NOT NULL,
+  mime_type VARCHAR(32) NOT NULL,
+  photo_data MEDIUMBLOB NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (announcement_id, photo_index)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS admin_otps (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   phone VARCHAR(24) NOT NULL,
