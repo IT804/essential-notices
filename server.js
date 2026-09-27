@@ -37,7 +37,7 @@ function decodePhoto(photo) {
 function encrypt(value) {
   if (!value) return null;
   const keyHex = process.env.PII_ENCRYPTION_KEY || '';
-  if (!/^[a-f0-9]{64}$/i.test(keyHex)) throw new Error('PII_ENCRYPTION_KEY must be 64 hex characters');
+  if (!/^[a-f0-9]{64}$/i.test(keyHex)) {const error=new Error('PII_ENCRYPTION_KEY must be 64 hex characters');error.code='PII_ENCRYPTION_KEY_NOT_CONFIGURED';throw error;}
   const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(keyHex,'hex'), iv);
   const encrypted = Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);
   return [iv.toString('hex'),cipher.getAuthTag().toString('hex'),encrypted.toString('hex')].join(':');
@@ -116,8 +116,8 @@ app.post('/api/announcements',async(req,res,next)=>{
     const {type,title,details,region,bloodType,contactName,contactPhone,latitude,longitude,photos,photoConsent}=req.body||{};
     if(!['blood','missing','found'].includes(type)||typeof title!=='string'||title.trim().length<5||title.length>180||typeof details!=='string'||details.trim().length<10||details.length>4000||typeof region!=='string'||region.trim().length<2||region.length>100) return res.status(400).json({error:'INVALID_ANNOUNCEMENT'});
     if(type==='blood'&&!['O+','O-','A+','A-','B+','B-','AB+','AB-'].includes(bloodType)) return res.status(400).json({error:'INVALID_BLOOD_TYPE'});
-    if(!Array.isArray(photos)||photos.length>2||(type!=='blood'&&photos.length<1)||(type==='blood'&&photos.length>0)) return res.status(400).json({error:type==='blood'?'INVALID_PHOTOS':'PHOTO_REQUIRED'});
-    if(type!=='blood'&&photoConsent!=='on') return res.status(400).json({error:'PHOTO_CONSENT_REQUIRED'});
+    if(!Array.isArray(photos)||photos.length>2||(type==='blood'&&photos.length>0)) return res.status(400).json({error:type==='blood'?'INVALID_PHOTOS':'PHOTO_REQUIRED'});
+    if(photos.length>0&&photoConsent!=='on') return res.status(400).json({error:'PHOTO_CONSENT_REQUIRED'});
     const decodedPhotos=photos.map(decodePhoto);
     if(decodedPhotos.some(photo=>!photo)) return res.status(400).json({error:'INVALID_PHOTOS'});
     if(contactPhone&&!validPhone(contactPhone)) return res.status(400).json({error:'PHONE_MUST_BE_E164'});
@@ -169,5 +169,5 @@ app.use(express.static(path.join(__dirname,'public')));
 for(const asset of ['styles.css','script.js','admin.css','admin.js']) app.get(`/${asset}`,(req,res,next)=>res.sendFile(path.join(__dirname,asset),error=>error&&next(error)));
 app.get('/admin',(req,res,next)=>res.sendFile(path.join(__dirname,'admin.html'),error=>error&&next(error)));
 app.get('/',(req,res,next)=>res.sendFile(path.join(__dirname,'index.html'),error=>error&&next(error)));
-app.use((err,req,res,next)=>{console.error(err.message);if(res.headersSent)return next(err);res.status(500).json({error:'SERVER_ERROR'});});
+app.use((err,req,res,next)=>{console.error(err.message);if(res.headersSent)return next(err);if(err.code==='PII_ENCRYPTION_KEY_NOT_CONFIGURED')return res.status(503).json({error:'SERVER_CONFIGURATION_ERROR'});if(['ECONNREFUSED','ETIMEDOUT','ENOTFOUND','EHOSTUNREACH','PROTOCOL_CONNECTION_LOST','ER_ACCESS_DENIED_ERROR','ER_BAD_DB_ERROR','ER_NO_SUCH_TABLE'].includes(err.code))return res.status(503).json({error:'DATABASE_UNAVAILABLE'});res.status(500).json({error:'SERVER_ERROR'});});
 app.listen(port,()=>console.log(`Essential Notices running at http://localhost:${port}`));
