@@ -1,11 +1,9 @@
 const login = document.querySelector('#login');
 const dashboard = document.querySelector('#dashboard');
-const requestForm = document.querySelector('#requestForm');
-const verifyForm = document.querySelector('#verifyForm');
+const loginForm = document.querySelector('#loginForm');
 const message = document.querySelector('#loginMessage');
 const logout = document.querySelector('#logout');
 const toast = document.querySelector('#toast');
-let phone = '';
 
 function notify(text) {
   toast.textContent = text;
@@ -26,11 +24,10 @@ async function api(url, options = {}) {
 function errorText(code) {
   return ({
     NOT_AN_ADMIN: 'این شماره به‌عنوان مدیر ثبت نشده است.',
-    SMS_NOT_CONFIGURED: 'سرویس پیامک پیکربندی نشده است.',
-    INVALID_OTP: 'کد ورود معتبر نیست.',
-    OTP_EXPIRED_OR_INVALID: 'کد اشتباه است یا اعتبار آن پایان یافته است.',
-    OTP_COOLDOWN: 'برای درخواست کد تازه کمی صبر کنید.'
-  })[code] || 'درخواست انجام نشد؛ تنظیمات و اتصال سرور را بررسی کنید.';
+    TOTP_NOT_CONFIGURED: 'ورود مدیر هنوز در تنظیمات امن سرور راه‌اندازی نشده است.',
+    INVALID_TOTP: 'کد برنامهٔ احراز هویت نادرست است یا زمان آن گذشته است.',
+    INVALID_PHONE: 'شمارهٔ مدیر معتبر نیست.'
+  })[code] || 'ورود انجام نشد؛ اتصال سرور و کد را بررسی کنید.';
 }
 
 function escapeHtml(value = '') {
@@ -47,37 +44,17 @@ function typeLabel(type) {
   return ({ blood: 'درخواست خون', missing: 'فرد یا وسیلهٔ گم‌شده', found: 'فرد یا وسیلهٔ پیدا‌شده' })[type] || type;
 }
 
-requestForm.addEventListener('submit', async event => {
+loginForm.addEventListener('submit', async event => {
   event.preventDefault();
-  phone = requestForm.elements.phone.value.trim();
-  message.textContent = 'در حال ارسال کد...';
+  const phone = loginForm.elements.phone.value.trim();
+  const code = loginForm.elements.code.value.trim();
+  message.textContent = 'در حال بررسی کد…';
   try {
-    await api('/api/auth/request-otp', { method: 'POST', body: JSON.stringify({ phone }) });
-    requestForm.hidden = true;
-    verifyForm.hidden = false;
-    message.textContent = 'کد پیامکی ارسال شد.';
-    verifyForm.elements.code.focus();
-  } catch (error) {
-    message.textContent = errorText(error.message);
-  }
-});
-
-verifyForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  message.textContent = 'در حال بررسی...';
-  try {
-    const code = new FormData(verifyForm).get('code');
-    await api('/api/auth/verify-otp', { method: 'POST', body: JSON.stringify({ phone, code }) });
+    await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ phone, code }) });
     await showDashboard();
   } catch (error) {
     message.textContent = errorText(error.message);
   }
-});
-
-document.querySelector('#backToPhone').addEventListener('click', () => {
-  verifyForm.hidden = true;
-  requestForm.hidden = false;
-  message.textContent = '';
 });
 
 async function showDashboard() {
@@ -138,9 +115,7 @@ logout.addEventListener('click', async () => {
     dashboard.hidden = true;
     login.hidden = false;
     logout.hidden = true;
-    requestForm.reset();
-    requestForm.hidden = false;
-    verifyForm.hidden = true;
+    loginForm.reset();
   }
 });
 

@@ -2,7 +2,7 @@
   "name": "essential-notices",
   "version": "1.0.0",
   "private": true,
-  "description": "Multilingual urgent notices app with MySQL and admin OTP login",
+  "description": "Multilingual urgent notices app with MySQL and TOTP admin authentication",
   "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
   "engines": { "node": ">=20" },
   "dependencies": {
