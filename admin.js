@@ -81,6 +81,7 @@ async function loadRows() {
         <td><div class="actions"><button data-id="${row.id}" data-status="verified">تأیید</button><button class="reject" data-id="${row.id}" data-status="rejected">رد</button><button data-id="${row.id}" data-status="resolved">حل شد</button><button class="delete" data-id="${row.id}" data-delete="true">حذف</button></div></td>
       </tr>`;
     }).join('') || '<tr><td colspan="6">اعلانی در این فهرست نیست.</td></tr>';
+    await loadCommunity().catch(() => {});
   } catch (error) {
     notify(errorText(error.message));
     if (error.message === 'AUTH_REQUIRED') {
@@ -90,6 +91,22 @@ async function loadRows() {
     }
   }
 }
+
+async function loadCommunity() {
+  const [feedback, donors] = await Promise.all([api('/api/admin/feedback?status=pending'), api('/api/admin/donors?status=pending')]);
+  document.querySelector('#feedbackRows').innerHTML = feedback.map(row => `<article class="community-card"><strong>${row.kind === 'report' ? 'گزارش تخلف' : 'سرنخ خصوصی'} · اعلان #${row.announcementId}</strong><p>${escapeHtml(row.details)}</p><small>${row.reason ? `دلیل: ${escapeHtml(row.reason)} · ` : ''}${row.contactName ? escapeHtml(row.contactName) : ''} ${row.contactPhone ? `<span class="phone">${escapeHtml(row.contactPhone)}</span>` : ''} · ${new Date(row.createdAt).toLocaleString('fa-IR')}</small><div class="actions"><button data-feedback-id="${row.id}" data-feedback-status="reviewed">بررسی شد</button><button class="reject" data-feedback-id="${row.id}" data-feedback-status="dismissed">رد</button></div></article>`).join('') || '<p>گزارش یا سرنخ تازه‌ای نیست.</p>';
+  document.querySelector('#donorRows').innerHTML = donors.map(row => `<article class="community-card"><strong>${escapeHtml(row.bloodType)} · ${escapeHtml(row.region)}</strong><small>${row.contactName ? escapeHtml(row.contactName) : ''} ${row.contactPhone ? `<span class="phone">${escapeHtml(row.contactPhone)}</span>` : ''} · ${new Date(row.createdAt).toLocaleString('fa-IR')}</small><div class="actions"><button data-donor-id="${row.id}" data-donor-status="verified">تأیید اهداکننده</button><button class="reject" data-donor-id="${row.id}" data-donor-status="rejected">رد</button></div></article>`).join('') || '<p>درخواست اهدای خون تازه‌ای نیست.</p>';
+}
+
+document.querySelector('#dashboard').addEventListener('click', async event => {
+  const button = event.target.closest('[data-feedback-id],[data-donor-id]');
+  if (!button) return;
+  try {
+    if (button.dataset.feedbackId) await api(`/api/admin/feedback/${button.dataset.feedbackId}`, { method: 'PATCH', body: JSON.stringify({ status: button.dataset.feedbackStatus }) });
+    if (button.dataset.donorId) await api(`/api/admin/donors/${button.dataset.donorId}`, { method: 'PATCH', body: JSON.stringify({ status: button.dataset.donorStatus }) });
+    await loadCommunity().catch(() => {});
+  } catch (error) { notify(errorText(error.message)); }
+});
 
 document.querySelector('#rows').addEventListener('click', async event => {
   const button = event.target.closest('button');

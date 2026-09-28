@@ -48,4 +48,37 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
   INDEX idx_session_expiry (expires_at)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS blood_donors (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  region VARCHAR(100) NOT NULL,
+  blood_type ENUM('O+','O-','A+','A-','B+','B-','AB+','AB-') NOT NULL,
+  contact_name_enc TEXT NULL,
+  contact_phone_enc TEXT NOT NULL,
+  status ENUM('pending','verified','rejected') NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_donors_public (status, blood_type, region)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS announcement_controls (
+  announcement_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+  token_hash CHAR(64) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_control_announcement FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS announcement_feedback (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  announcement_id BIGINT UNSIGNED NOT NULL,
+  kind ENUM('tip','report') NOT NULL,
+  reason VARCHAR(40) NULL,
+  details TEXT NOT NULL,
+  contact_name_enc TEXT NULL,
+  contact_phone_enc TEXT NULL,
+  status ENUM('pending','reviewed','dismissed') NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_feedback_queue (status, kind, created_at),
+  INDEX idx_feedback_announcement (announcement_id)
+) ENGINE=InnoDB;
+
 -- Create a dedicated DB user and grant only this database's required privileges in production.
