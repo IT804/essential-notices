@@ -83,11 +83,18 @@ async function seedDemoSamples(){
   const conn=await pool.getConnection();
   try{
     await conn.beginTransaction();
-    const [existingAnnouncements]=await conn.execute("SELECT id FROM announcements WHERE title LIKE ? LIMIT 1",['[آزمایشی] غیرواقعی:%']);
-    const [existingDonors]=await conn.execute("SELECT id FROM blood_donors WHERE region LIKE ? LIMIT 1",['نمونه آزمایشی · %']);
-    if(existingAnnouncements.length||existingDonors.length){await conn.rollback();return}
-    const car=await fs.readFile(path.join(__dirname,'sample-car.png'));
-    const person=await fs.readFile(path.join(__dirname,'sample-person.png'));
+    const [existingAnnouncements]=await conn.execute("SELECT type,title,status FROM announcements WHERE title LIKE ?",['[آزمایشی] غیرواقعی:%']);
+    const [existingDonors]=await conn.execute("SELECT region,status FROM blood_donors WHERE region LIKE ?",['نمونه آزمایشی · %']);
+    const announcementNumbers={blood:new Set(),missing:new Set(),found:new Set()};
+    for(const row of existingAnnouncements){
+      const match=row.title.match(/· نمونه (\d+)$/u);
+      if(match&&announcementNumbers[row.type])announcementNumbers[row.type].add(Number(match[1]));
+    }
+    const announcementsAlreadyApproved=existingAnnouncements.length>0&&existingAnnouncements.every(row=>row.status==='verified');
+    const donorsAlreadyApproved=existingDonors.length>0&&existingDonors.every(row=>row.status==='verified');
+    const needsSamples=Object.values(announcementNumbers).some(numbers=>numbers.size<20);
+    const car=needsSamples?await fs.readFile(path.join(__dirname,'sample-car.png')):null;
+    const person=needsSamples?await fs.readFile(path.join(__dirname,'sample-person.png')):null;
     const groups=['O+','A+','B+','AB+','O-','A-','B-','AB-'];
     const regions=['کابل','هرات','مزار شریف','قندهار','جلال‌آباد'];
     for(let i=0;i<20;i++){
@@ -97,13 +104,15 @@ async function seedDemoSamples(){
         {type:'found',title:`[آزمایشی] غیرواقعی: اعلان فرد یا شیء پیدا‌شده · نمونه ${String(i+1).padStart(2,'0')}`,photo:i%5===4?car:person,mime:'image/png'}
       ];
       for(const sample of samples){
-        const [inserted]=await conn.execute("INSERT INTO announcements(type,title,details,region,blood_type,status) VALUES(?,?,?,?,?,'pending')",[sample.type,sample.title,'این دادهٔ آزمایشی و کاملاً غیرواقعی فقط برای نمایش و بررسی سامانه است. با آن تماس نگیرید و براساس آن اقدام نکنید.',`نمونه آزمایشی · ${regions[i%regions.length]}`,sample.blood||null]);
+        if(announcementNumbers[sample.type].has(i+1))continue;
+        const status=announcementsAlreadyApproved?'verified':'pending';
+        const [inserted]=await conn.execute('INSERT INTO announcements(type,title,details,region,blood_type,status) VALUES(?,?,?,?,?,?)',[sample.type,sample.title,'این دادهٔ آزمایشی و کاملاً غیرواقعی فقط برای نمایش و بررسی سامانه است. با آن تماس نگیرید و براساس آن اقدام نکنید.',`نمونه آزمایشی · ${regions[i%regions.length]}`,sample.blood||null,status]);
         if(sample.photo)await conn.execute('INSERT INTO announcement_photos(announcement_id,photo_index,mime_type,photo_data) VALUES(?,1,?,?)',[inserted.insertId,sample.mime,sample.photo]);
       }
     }
-    for(let i=0;i<20;i++)await conn.execute("INSERT INTO blood_donors(region,blood_type,contact_name_enc,contact_phone_enc,status) VALUES(?,?,?,?,'pending')",[`نمونه آزمایشی · ${regions[i%regions.length]}`,groups[i%groups.length],encrypt('نمونهٔ ساختگی، نه اهداکنندهٔ واقعی'),encrypt('نمونهٔ آزمایشی است؛ شمارهٔ واقعی ندارد')]);
+    for(let i=existingDonors.length;i<20;i++)await conn.execute('INSERT INTO blood_donors(region,blood_type,contact_name_enc,contact_phone_enc,status) VALUES(?,?,?,?,?)',[`نمونه آزمایشی · ${regions[i%regions.length]}`,groups[i%groups.length],encrypt('نمونهٔ ساختگی، نه اهداکنندهٔ واقعی'),encrypt('نمونهٔ آزمایشی است؛ شمارهٔ واقعی ندارد'),donorsAlreadyApproved?'verified':'pending']);
     await conn.commit();
-    console.log('Created 20 clearly labeled demo entries per announcement category and donor list.');
+    console.log('Ensured 20 clearly labeled demo entries per announcement category and donor list.');
   }catch(error){await conn.rollback().catch(()=>{});throw error}finally{conn.release()}
 }
 function decodeBase32(value){
