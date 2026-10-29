@@ -121,7 +121,7 @@ async function seedDemoSamples(){
     // were left rejected. A saved marker prevents later admin rejections from
     // being undone by normal restarts or future deployments.
     if(!approvalRecorded&&(announcementsAlreadyApproved||donorsAlreadyApproved)){
-      await conn.execute("UPDATE announcements SET status='verified' WHERE status IN ('pending','rejected') AND title LIKE ?",['[آزمایشی] غیرواقعی:%']);
+      await conn.execute("UPDATE announcements SET status='verified' WHERE status IN ('pending','rejected','resolved') AND title LIKE ?",['[آزمایشی] غیرواقعی:%']);
       await conn.execute("UPDATE blood_donors SET status='verified' WHERE status IN ('pending','rejected') AND region LIKE ?",['نمونه آزمایشی · %']);
       await conn.execute("INSERT INTO demo_data_state(state_key,state_value) VALUES('approved','yes') ON DUPLICATE KEY UPDATE state_value='yes'");
     }
