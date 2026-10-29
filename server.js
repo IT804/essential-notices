@@ -5,6 +5,7 @@ const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2/promise');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const fs = require('node:fs/promises');
 
 const app = express();
 const isProd = process.env.NODE_ENV === 'production';
@@ -17,6 +18,7 @@ async function ensureFeatureTables(){
   await pool.execute("CREATE TABLE IF NOT EXISTS announcement_feedback (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,announcement_id BIGINT UNSIGNED NOT NULL,kind ENUM('tip','report') NOT NULL,reason VARCHAR(40) NULL,details TEXT NOT NULL,contact_name_enc TEXT NULL,contact_phone_enc TEXT NULL,status ENUM('pending','reviewed','dismissed') NOT NULL DEFAULT 'pending',created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,INDEX idx_feedback_queue (status,kind,created_at),INDEX idx_feedback_announcement (announcement_id)) ENGINE=InnoDB");
 }
 const featureTablesReady=ensureFeatureTables();featureTablesReady.catch(error=>console.error(`Supplemental database setup failed: ${error.code||error.message}`));
+const demoDataReady=featureTablesReady.then(()=>seedDemoSamples());demoDataReady.catch(error=>console.error(`Demo data setup failed: ${error.code||error.message}`));
 
 app.disable('x-powered-by');
 app.use(helmet({contentSecurityPolicy:false, crossOriginEmbedderPolicy:false}));
@@ -73,6 +75,33 @@ function safeAnnouncement(row, admin=false) {
 function validPhone(value){return /^\+[1-9]\d{7,14}$/.test(value||'')}
 function isAdminPhone(value){return (process.env.ADMIN_PHONE||'').split(',').map(phone=>phone.trim()).filter(Boolean).includes(value)}
 function validCoords(lat,lng){const emptyLat=lat==null||lat==='',emptyLng=lng==null||lng==='';if(emptyLat&&emptyLng)return true;if(emptyLat||emptyLng)return false;return Number.isFinite(Number(lat))&&Number.isFinite(Number(lng))&&Math.abs(Number(lat))<=90&&Math.abs(Number(lng))<=180}
+async function seedDemoSamples(){
+  const conn=await pool.getConnection();
+  try{
+    await conn.beginTransaction();
+    const [existingAnnouncements]=await conn.execute("SELECT id FROM announcements WHERE title LIKE ? LIMIT 1",['[آزمایشی] غیرواقعی:%']);
+    const [existingDonors]=await conn.execute("SELECT id FROM blood_donors WHERE region LIKE ? LIMIT 1",['نمونه آزمایشی · %']);
+    if(existingAnnouncements.length||existingDonors.length){await conn.rollback();return}
+    const car=await fs.readFile(path.join(__dirname,'sample-car.png'));
+    const person=await fs.readFile(path.join(__dirname,'sample-person.png'));
+    const groups=['O+','A+','B+','AB+','O-','A-','B-','AB-'];
+    const regions=['کابل','هرات','مزار شریف','قندهار','جلال‌آباد'];
+    for(let i=0;i<20;i++){
+      const samples=[
+        {type:'blood',blood:groups[i%groups.length],title:`[آزمایشی] غیرواقعی: درخواست خون ${groups[i%groups.length]} · نمونه ${String(i+1).padStart(2,'0')}`},
+        {type:'missing',title:`[آزمایشی] غیرواقعی: اعلان فرد یا شیء گم‌شده · نمونه ${String(i+1).padStart(2,'0')}`,photo:i%5===4?car:person,mime:i%5===4?'image/png':'image/png'},
+        {type:'found',title:`[آزمایشی] غیرواقعی: اعلان فرد یا شیء پیدا‌شده · نمونه ${String(i+1).padStart(2,'0')}`,photo:i%5===4?car:person,mime:'image/png'}
+      ];
+      for(const sample of samples){
+        const [inserted]=await conn.execute("INSERT INTO announcements(type,title,details,region,blood_type,status) VALUES(?,?,?,?,?,'pending')",[sample.type,sample.title,'این دادهٔ آزمایشی و کاملاً غیرواقعی فقط برای نمایش و بررسی سامانه است. با آن تماس نگیرید و براساس آن اقدام نکنید.',`نمونه آزمایشی · ${regions[i%regions.length]}`,sample.blood||null]);
+        if(sample.photo)await conn.execute('INSERT INTO announcement_photos(announcement_id,photo_index,mime_type,photo_data) VALUES(?,1,?,?)',[inserted.insertId,sample.mime,sample.photo]);
+      }
+    }
+    for(let i=0;i<20;i++)await conn.execute("INSERT INTO blood_donors(region,blood_type,contact_name_enc,contact_phone_enc,status) VALUES(?,?,?,?,'pending')",[`نمونه آزمایشی · ${regions[i%regions.length]}`,groups[i%groups.length],encrypt('نمونهٔ ساختگی، نه اهداکنندهٔ واقعی'),encrypt('نمونهٔ آزمایشی است؛ شمارهٔ واقعی ندارد')]);
+    await conn.commit();
+    console.log('Created 20 clearly labeled demo entries per announcement category and donor list.');
+  }catch(error){await conn.rollback().catch(()=>{});throw error}finally{conn.release()}
+}
 function decodeBase32(value){
   const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   const normalized=String(value||'').replace(/=+$/,'').toUpperCase();
@@ -124,11 +153,11 @@ app.get('/api/announcements',async(req,res,next)=>{
     const sort=req.query.sort==='oldest'?'ASC':'DESC';
     const [countRows]=await pool.execute(`SELECT COUNT(*) AS total FROM announcements a WHERE ${where.join(' AND ')}`,values);
     const offset=(page-1)*limit;
-    const [rows]=await pool.execute(`SELECT a.id,a.type,a.title,a.details,a.region,a.blood_type,a.status,a.latitude,a.longitude,a.created_at,(SELECT COUNT(*) FROM announcement_photos p WHERE p.announcement_id=a.id) AS photo_count FROM announcements a WHERE ${where.join(' AND ')} ORDER BY a.created_at ${sort} LIMIT ? OFFSET ?`,[...values,limit,offset]);
+    const [rows]=await pool.execute(`SELECT a.id,a.type,a.title,a.details,a.region,a.blood_type,a.status,a.latitude,a.longitude,a.created_at,(SELECT COUNT(*) FROM announcement_photos p WHERE p.announcement_id=a.id) AS photo_count FROM announcements a WHERE ${where.join(' AND ')} ORDER BY a.created_at ${sort},a.id ${sort} LIMIT ? OFFSET ?`,[...values,limit,offset]);
     res.json({items:rows.map(r=>safeAnnouncement(r)),total:Number(countRows[0]?.total||0),page,limit});
   }catch(e){next(e)}
 });
-app.get('/api/impact',async(req,res,next)=>{try{await featureTablesReady;const [[notices]]=await pool.execute("SELECT COUNT(*) AS total,SUM(status='resolved') AS resolved FROM announcements WHERE status IN ('verified','resolved')");const [[donors]]=await pool.execute("SELECT COUNT(*) AS total FROM blood_donors WHERE status='verified'");res.json({announcements:Number(notices.total||0),resolved:Number(notices.resolved||0),donors:Number(donors.total||0)})}catch(e){next(e)}});
+app.get('/api/impact',async(req,res,next)=>{try{await featureTablesReady;const [[notices]]=await pool.execute("SELECT COUNT(*) AS total,SUM(status='resolved') AS resolved FROM announcements WHERE status IN ('verified','resolved') AND title NOT LIKE '[آزمایشی] غیرواقعی:%'");const [[donors]]=await pool.execute("SELECT COUNT(*) AS total FROM blood_donors WHERE status='verified' AND region NOT LIKE 'نمونه آزمایشی · %'");res.json({announcements:Number(notices.total||0),resolved:Number(notices.resolved||0),donors:Number(donors.total||0)})}catch(e){next(e)}});
 app.get('/api/donors',async(req,res,next)=>{try{await featureTablesReady;const values=[],where=["status='verified'"];if(['O+','O-','A+','A-','B+','B-','AB+','AB-'].includes(req.query.bloodType)){where.push('blood_type=?');values.push(req.query.bloodType)}if(typeof req.query.region==='string'&&req.query.region.trim()){where.push('region LIKE ?');values.push(`%${req.query.region.trim().slice(0,100)}%`)}const [rows]=await pool.execute(`SELECT id,region,blood_type,created_at FROM blood_donors WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT 100`,values);res.json(rows.map(row=>({id:row.id,region:row.region,bloodType:row.blood_type,createdAt:row.created_at})))}catch(e){next(e)}});
 app.post('/api/donors',async(req,res,next)=>{try{await featureTablesReady;const {region,bloodType,contactName,contactPhone,consent}=req.body||{};if(typeof region!=='string'||region.trim().length<2||region.trim().length>100||!['O+','O-','A+','A-','B+','B-','AB+','AB-'].includes(bloodType)||!validPhone(contactPhone)||consent!=='on')return res.status(400).json({error:'INVALID_DONOR_REGISTRATION'});const [result]=await pool.execute('INSERT INTO blood_donors(region,blood_type,contact_name_enc,contact_phone_enc,status) VALUES(?,?,?,?,\'pending\')',[region.trim(),bloodType,encrypt(String(contactName||'').trim().slice(0,120)),encrypt(contactPhone)]);res.status(201).json({id:result.insertId,status:'pending'})}catch(e){next(e)}});
 app.post('/api/announcements/:id/feedback',async(req,res,next)=>{try{await featureTablesReady;const id=Number(req.params.id),{kind,reason,details,contactName,contactPhone}=req.body||{};if(!Number.isSafeInteger(id)||id<1||!['tip','report'].includes(kind)||typeof details!=='string'||details.trim().length<8||details.length>2000||contactPhone&&!validPhone(contactPhone))return res.status(400).json({error:'INVALID_FEEDBACK'});if(kind==='report'&&!['false','inappropriate','duplicate','other'].includes(reason))return res.status(400).json({error:'INVALID_REPORT_REASON'});const [exists]=await pool.execute("SELECT id FROM announcements WHERE id=? AND status='verified' LIMIT 1",[id]);if(!exists.length)return res.status(404).json({error:'ANNOUNCEMENT_NOT_FOUND'});await pool.execute('INSERT INTO announcement_feedback(announcement_id,kind,reason,details,contact_name_enc,contact_phone_enc) VALUES(?,?,?,?,?,?)',[id,kind,kind==='report'?reason:null,details.trim(),encrypt(String(contactName||'').trim().slice(0,120)),encrypt(contactPhone||'')]);res.status(201).json({status:'received'})}catch(e){next(e)}});
@@ -181,11 +210,12 @@ app.post('/api/auth/login',async(req,res,next)=>{
 app.post('/api/auth/logout',adminAuth,async(req,res,next)=>{try{const token=req.cookies?.admin_session;if(token)await pool.execute('DELETE FROM admin_sessions WHERE token_hash=?',[sha(token)]);res.clearCookie('admin_session',{httpOnly:true,secure:isProd,sameSite:'strict',path:'/'}).json({message:'LOGGED_OUT'})}catch(e){next(e)}});
 app.get('/api/admin/me',adminAuth,(req,res)=>res.json({phone:req.admin.phone}));
 app.get('/api/admin/announcements',adminAuth,async(req,res,next)=>{try{const status=['pending','verified','rejected','resolved'].includes(req.query.status)?req.query.status:null;const [rows]=await pool.execute(`SELECT a.*,(SELECT COUNT(*) FROM announcement_photos p WHERE p.announcement_id=a.id) AS photo_count FROM announcements a ${status?'WHERE a.status=?':''} ORDER BY a.created_at DESC LIMIT 300`,status?[status]:[]);res.json(rows.map(r=>safeAnnouncement(r,true)))}catch(e){next(e)}});
-app.get('/api/admin/donors',adminAuth,async(req,res,next)=>{try{await featureTablesReady;const status=['pending','verified','rejected'].includes(req.query.status)?req.query.status:null;const [rows]=await pool.execute(`SELECT * FROM blood_donors ${status?'WHERE status=?':''} ORDER BY created_at DESC LIMIT 300`,status?[status]:[]);res.json(rows.map(row=>({id:row.id,region:row.region,bloodType:row.blood_type,status:row.status,contactName:(()=>{try{return decrypt(row.contact_name_enc)}catch{return null}})(),contactPhone:(()=>{try{return decrypt(row.contact_phone_enc)}catch{return null}})(),createdAt:row.created_at})))}catch(e){next(e)}});
+app.get('/api/admin/donors',adminAuth,async(req,res,next)=>{try{await featureTablesReady;const status=['pending','verified','rejected'].includes(req.query.status)?req.query.status:null;const [rows]=await pool.execute(`SELECT * FROM blood_donors ${status?'WHERE status=?':''} ORDER BY created_at DESC LIMIT 300`,status?[status]:[]);res.json(rows.map(row=>{const demo=row.region.startsWith('نمونه آزمایشی · ');return {id:row.id,region:row.region,bloodType:row.blood_type,status:row.status,contactName:demo?null:(()=>{try{return decrypt(row.contact_name_enc)}catch{return null}})(),contactPhone:demo?null:(()=>{try{return decrypt(row.contact_phone_enc)}catch{return null}})(),createdAt:row.created_at}}))}catch(e){next(e)}});
 app.patch('/api/admin/donors/:id',adminAuth,async(req,res,next)=>{try{await featureTablesReady;const id=Number(req.params.id),{status}=req.body||{};if(!Number.isSafeInteger(id)||id<1||!['verified','rejected'].includes(status))return res.status(400).json({error:'INVALID_DONOR_UPDATE'});const [result]=await pool.execute('UPDATE blood_donors SET status=? WHERE id=?',[status,id]);if(!result.affectedRows)return res.status(404).json({error:'NOT_FOUND'});res.json({id,status})}catch(e){next(e)}});
 app.get('/api/admin/feedback',adminAuth,async(req,res,next)=>{try{await featureTablesReady;const status=['pending','reviewed','dismissed'].includes(req.query.status)?req.query.status:null;const [rows]=await pool.execute(`SELECT * FROM announcement_feedback ${status?'WHERE status=?':''} ORDER BY created_at DESC LIMIT 300`,status?[status]:[]);res.json(rows.map(row=>({id:row.id,announcementId:row.announcement_id,kind:row.kind,reason:row.reason,details:row.details,status:row.status,contactName:(()=>{try{return decrypt(row.contact_name_enc)}catch{return null}})(),contactPhone:(()=>{try{return decrypt(row.contact_phone_enc)}catch{return null}})(),createdAt:row.created_at})))}catch(e){next(e)}});
 app.patch('/api/admin/feedback/:id',adminAuth,async(req,res,next)=>{try{await featureTablesReady;const id=Number(req.params.id),{status}=req.body||{};if(!Number.isSafeInteger(id)||id<1||!['reviewed','dismissed'].includes(status))return res.status(400).json({error:'INVALID_FEEDBACK_UPDATE'});const [result]=await pool.execute('UPDATE announcement_feedback SET status=? WHERE id=?',[status,id]);if(!result.affectedRows)return res.status(404).json({error:'NOT_FOUND'});res.json({id,status})}catch(e){next(e)}});
 app.patch('/api/admin/announcements/:id',adminAuth,async(req,res,next)=>{try{const id=Number(req.params.id),{status}=req.body||{};if(!Number.isSafeInteger(id)||id<1||!['pending','verified','rejected','resolved'].includes(status))return res.status(400).json({error:'INVALID_UPDATE'});const [result]=await pool.execute('UPDATE announcements SET status=? WHERE id=?',[status,id]);if(!result.affectedRows)return res.status(404).json({error:'NOT_FOUND'});res.json({id,status})}catch(e){next(e)}});
+app.post('/api/admin/demo-data/approve',adminAuth,async(req,res,next)=>{try{await demoDataReady;const conn=await pool.getConnection();try{await conn.beginTransaction();const [announcements]=await conn.execute("UPDATE announcements SET status='verified' WHERE status='pending' AND title LIKE '[آزمایشی] غیرواقعی:%'");const [donors]=await conn.execute("UPDATE blood_donors SET status='verified' WHERE status='pending' AND region LIKE 'نمونه آزمایشی · %'");await conn.commit();res.json({announcements:announcements.affectedRows,donors:donors.affectedRows})}catch(error){await conn.rollback().catch(()=>{});throw error}finally{conn.release()}}catch(e){next(e)}});
 app.delete('/api/admin/announcements/:id',adminAuth,async(req,res,next)=>{const conn=await pool.getConnection();try{const id=Number(req.params.id);await conn.beginTransaction();const [result]=await conn.execute('DELETE FROM announcements WHERE id=?',[id]);if(!result.affectedRows){await conn.rollback();return res.status(404).json({error:'NOT_FOUND'})}await conn.execute('DELETE FROM announcement_photos WHERE announcement_id=?',[id]);await conn.commit();res.json({id,deleted:true})}catch(e){await conn.rollback().catch(()=>{});next(e)}finally{conn.release()}});
 
 app.get('/api/photos/:id/:index',async(req,res,next)=>{

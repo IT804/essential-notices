@@ -98,6 +98,19 @@ async function loadCommunity() {
   document.querySelector('#donorRows').innerHTML = donors.map(row => `<article class="community-card"><strong>${escapeHtml(row.bloodType)} · ${escapeHtml(row.region)}</strong><small>${row.contactName ? escapeHtml(row.contactName) : ''} ${row.contactPhone ? `<span class="phone">${escapeHtml(row.contactPhone)}</span>` : ''} · ${new Date(row.createdAt).toLocaleString('fa-IR')}</small><div class="actions"><button data-donor-id="${row.id}" data-donor-status="verified">تأیید اهداکننده</button><button class="reject" data-donor-id="${row.id}" data-donor-status="rejected">رد</button></div></article>`).join('') || '<p>درخواست اهدای خون تازه‌ای نیست.</p>';
 }
 
+document.querySelector('#approveDemoData').addEventListener('click', async event => {
+  if (!confirm('۶۰ اعلان و ۲۰ نمونهٔ اهداکنندهٔ کاملاً غیرواقعی با برچسب آزمایشی در سایت عمومی نمایش داده شوند؟')) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await api('/api/admin/demo-data/approve', { method: 'POST', body: JSON.stringify({}) });
+    notify(`${result.announcements} اعلان و ${result.donors} نمونهٔ اهداکننده در صفحهٔ اصلی منتشر شد.`);
+    document.querySelector('#statusFilter').value = 'verified';
+    await loadRows();
+  } catch (error) { notify(errorText(error.message)); }
+  finally { button.disabled = false; }
+});
+
 document.querySelector('#dashboard').addEventListener('click', async event => {
   const button = event.target.closest('[data-feedback-id],[data-donor-id]');
   if (!button) return;
