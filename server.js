@@ -90,8 +90,11 @@ async function seedDemoSamples(){
       const match=row.title.match(/· نمونه (\d+)$/u);
       if(match&&announcementNumbers[row.type])announcementNumbers[row.type].add(Number(match[1]));
     }
-    const announcementsAlreadyApproved=existingAnnouncements.length>0&&existingAnnouncements.every(row=>row.status==='verified');
-    const donorsAlreadyApproved=existingDonors.length>0&&existingDonors.every(row=>row.status==='verified');
+    // Approval of the demo set is reflected by verified demo rows. Carry that
+    // approval forward to any stranded pending samples when a deploy repairs
+    // an incomplete set; never change rejected or resolved notices.
+    const announcementsAlreadyApproved=existingAnnouncements.some(row=>row.status==='verified');
+    const donorsAlreadyApproved=existingDonors.some(row=>row.status==='verified');
     const needsSamples=Object.values(announcementNumbers).some(numbers=>numbers.size<20);
     const car=needsSamples?await fs.readFile(path.join(__dirname,'sample-car.png')):null;
     const person=needsSamples?await fs.readFile(path.join(__dirname,'sample-person.png')):null;
@@ -111,6 +114,8 @@ async function seedDemoSamples(){
       }
     }
     for(let i=existingDonors.length;i<20;i++)await conn.execute('INSERT INTO blood_donors(region,blood_type,contact_name_enc,contact_phone_enc,status) VALUES(?,?,?,?,?)',[`نمونه آزمایشی · ${regions[i%regions.length]}`,groups[i%groups.length],encrypt('نمونهٔ ساختگی، نه اهداکنندهٔ واقعی'),encrypt('نمونهٔ آزمایشی است؛ شمارهٔ واقعی ندارد'),donorsAlreadyApproved?'verified':'pending']);
+    if(announcementsAlreadyApproved)await conn.execute("UPDATE announcements SET status='verified' WHERE status='pending' AND title LIKE ?",['[آزمایشی] غیرواقعی:%']);
+    if(donorsAlreadyApproved)await conn.execute("UPDATE blood_donors SET status='verified' WHERE status='pending' AND region LIKE ?",['نمونه آزمایشی · %']);
     await conn.commit();
     console.log('Ensured 20 clearly labeled demo entries per announcement category and donor list.');
   }catch(error){await conn.rollback().catch(()=>{});throw error}finally{conn.release()}
